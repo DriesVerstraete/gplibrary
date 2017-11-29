@@ -11,6 +11,7 @@ class Channel(Model):
     Variables
     ---------
     A_r        [m^2]     frontal area
+    h          [m]         channel height
 
     Upper Unbounded
     ---------------
@@ -23,6 +24,7 @@ class Channel(Model):
     """
     def setup(self):
         exec parse_variables(Channel.__doc__)
+        return [A_r == h**2]
 
     def dynamic(self,state):
         return ChannelP(self,state)
@@ -32,30 +34,29 @@ class ChannelP(Model):
 
     Variables
     ---------
-    alpha      [-]        T_out/T_in
-    cp         [J/(kg*K)] heat capacity of air
-    dT         [-]        wall/free-stream temp ratio - 1
-    dTr        [K]        air/wall temperature difference
-    fV         [-]        air velocity ratio across channel
-    fr         [N/m^2]    force per frontal area
-    eps        [-]        effectiveness
-    Hdot       [J/s]      heat flow rate
-    mdot       [kg/s]     air mass flow rate
-    Pf         [-]        pressure drop parameter
-    Tr         [K]        wall temperature 
-    A_e         [m^2]      flow exit area
+    alpha             [-]         T_out/T_in
+    cp         1004   [J/(kg*K)]  heat capacity of air
+    dT                [-]         wall/free-stream temp ratio - 1
+    eps        0.5    [-]         effectiveness
+    fV                [-]         air velocity ratio across channel
+    fr                [N/m^2]     force per frontal area
+    Hdot       9.9    [J/s]       heat flow rate
+    mdot              [kg/s]      air mass flow rate
+    Pf         5      [-]         pressure drop parameter
+    Tr         85+273 [K]         wall temperature 
+    A_e               [m^2]       flow exit area
 
 
     Upper Unbounded
     ---------------
-    Hdot, mdot, rho_out, fV, Tr, A_e, P0_in, dTr, V_out, cp
+    fV, A_e, P0_in
 
     Lower Unbounded
     ---------------
-    Hdot, fr, cp, fV, V_out, P_out, mdot, eps, V_in, A_e, rho_in, Pf, dTr, dT, rho_out
+    fr, fV, V_out, P_out, V_in, rho_in, rho_out
  
     """
-    def setup(self,channel,state):
+    def setup(self, channel, state):
         self.channel = channel
         exec parse_variables(ChannelP.__doc__)
 
@@ -70,16 +71,17 @@ class ChannelP(Model):
         A_r = self.channel.A_r
 
         constraints = []
-        constraints += [mdot == state.rho_in*state.V_in*A_r,
-                        mdot == rho_out*state.V_out*A_e,
-                        Hdot == mdot*cp*dT*eps*state.T_in,
+        constraints += [mdot == rho_in*V_in*A_r,
+                        mdot == rho_out*V_out*A_e,
+                        Hdot == mdot*cp*dT*eps*T_in,
+                        fV == V_out/V_in,
                         #pressure drop
-                        Pf*(0.5*state.rho_in*state.V_in**2) == fr,
-                        state.T_out/state.T_in >= 1 + dT*eps,
-                        dT*state.T_in + state.T_in <= Tr,
-                        alpha == state.T_out/state.T_in,
-                        state.P0_in >= state.P_out + 0.5*state.rho_in*state.V_in**2*(Pf+alpha**2),
-                        state.T_out <= Tr,
+                        Pf*(0.5*rho_in*V_in**2) == fr,
+                        alpha >= 1 + dT*eps,
+                        dT*T_in + T_in <= Tr,
+                        alpha == T_out/T_in,
+                        P0_in >= P_out + 0.5*rho_in*V_in**2*Pf + 0.5*rho_out*V_out**2,
+                        T_out <= Tr,
                         ]
         return constraints
 
@@ -88,56 +90,63 @@ class HXState(Model):
 
     Variables
     ---------
-    P0_in      self.calc_p0in [Pa]        incoming total pressure
-    P_in       101000         [Pa]        incoming static pressure
-    P_out      101000         [Pa]        exit static pressure
-    rho_in     1.25           [kg/(m^3)]  incoming air density
-    rho_out                   [kg/(m^3)]  exiting air density
-    V_in       2              [m/s]       incoming air velocity
-    V_out                     [m/s]       exiting air velocity
-    T_in       268            [K]         incoming air temperature
-    T_out                     [K]         exiting air temperature
+    P0_in      0.5*1.25*30**2+101000 [Pa]        incoming total pressure
+    P_in                             [Pa]        incoming static pressure
+    P_out      90000                 [Pa]        exit static pressure
+    R          287.1                 [J/(kg*K)]  specific gas constant of air 
+    rho_in                           [kg/(m^3)]  incoming air density
+    rho_out                          [kg/(m^3)]  exiting air density
+    V_in       30                    [m/s]       incoming air velocity
+    V_out                            [m/s]       exiting air velocity
+    T_in       -20+273               [K]         incoming air temperature
+    T_out                            [K]         exiting air temperature
 
 
     Upper Unbounded
     ---------------
     V_out, T_out
 
+    Lower Unbounded
+    ---------------
+    rho_out, rho_in, P_in
+
     """
-    calc_p0in = lambda self, c: c[self.P_in] + 0.5*c[self.rho_in] * c[self.V_in]**2
+    #calc_p0in = lambda self, c: c[self.P_in] + 0.5*c[self.rho_in] * c[self.V_in]**2
 
     def setup(self):
         exec parse_variables(HXState.__doc__)
-        return [V_out == V_in*T_out/T_in,
-                V_out == V_in*rho_in/rho_out,
+        return [P0_in >= P_in + 1/2*rho_in*V_in**2,
+                V_out == V_in*T_out/T_in,
+                P_out == rho_out*R*T_out,
+                P_in  == rho_in*R*T_in,
                 T_out >= T_in]
 
 class HX(Model):
-    """ Heat eXchanger model
-    SKIP VERIFICATION
-    
+    """ Heat eXchanger model 
+
+    Upper Unbounded
+    ---------------
+    mdot, A_e, A_r
+
+    Lower Unbounded
+    ---------------
+    fr, rho_in, P_in
     """
     def setup(self,state):
         self.channel = Channel()
         self.channelP = self.channel.dynamic(state)
         self.state = state
-        constraints = []
-        return constraints, self.channel, self.channelP, state
+        self.mdot = self.channelP.mdot
+        self.fr = self.channelP.fr
+        self.A_e = self.channelP.A_e
+        self.A_r = self.channel.A_r
+        self.rho_in = self.state.rho_in
+        self.P_in = self.state.P_in
+        return self.channel, self.channelP, state
 
 if __name__ == "__main__":
     state = HXState()
-    state.substitutions.update({
-
-        })
     m = HX(state)
-    m.substitutions.update({
-        m.channelP.Hdot:9.9*units('W'),
-        m.channelP.mdot: 0.35*units('kg/s'),
-        m.channelP.Tr: (85+273)*units('K'),
-        m.channelP.eps: 0.5,
-        m.channelP.Pf: 5,
-        m.channelP.cp: 1004*units('J/(kg*K)'),
-        })
 
-    m.cost = m.channel.A_r + m.channelP.A_e + m.channelP.fr*units('m^4/N')
+    m.cost = m.channel.A_r*m.channelP.A_e*m.channelP.mdot
     sol = m.solve()
