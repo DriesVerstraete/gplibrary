@@ -10,11 +10,12 @@ class Channel(Model):
 
     Variables
     ---------
-    A_r            [m^2]     frontal area
-    h              [m]       channel height
-    l              [m]       channel length
-    Pf_ref  21.66  [-]       reference pressure drop parameter
-    Re_ref  90550  [-]       reference Reynolds number
+    A_r                 [m^2]     frontal area
+    h                   [m]       channel height
+    l                   [m]       channel length
+    eta_h_ref  0.917    [-]       reference effectiveness
+    Pf_ref  21.66       [-]       reference pressure drop parameter
+    Re_ref  90550       [-]       reference Reynolds number
     Upper Unbounded
     ---------------
     A_r, l
@@ -39,7 +40,7 @@ class ChannelP(Model):
     alpha             [-]         T_out/T_in
     cp         1004   [J/(kg*K)]  heat capacity of air
     dT                [-]         wall/free-stream temp ratio - 1
-    eps        0.5    [-]         effectiveness
+    eta_h             [-]         effectiveness
     fV                [-]         air velocity ratio across channel
     fr                [N/m^2]     force per frontal area
     Hdot       9.9    [J/s]       heat flow rate
@@ -74,24 +75,29 @@ class ChannelP(Model):
         P0_in = self.P0_in = state.P0_in
         P_out = self.P_out = state.P_out
         A_r = self.channel.A_r
+        eta_h_ref = self.eta_h_ref = self.channel.eta_h_ref
         Pf_ref = self.Pf_ref = self.channel.Pf_ref
         Re_ref = self.channel.Re_ref
         l = self.l = self.channel.l
 
         Pf_rat = Pf/Pf_ref
         Re_rat = Re/Re_ref
+        eta_h_rat = eta_h/eta_h_ref
 
         constraints = []
         constraints += [mdot == rho_in*V_in*A_r,
                         mdot == rho_out*V_out*A_e,
-                        Hdot == mdot*cp*dT*eps*T_in,
+                        Hdot == mdot*cp*dT*eta_h*T_in,
                         fV == V_out/V_in,
                         #channel Reynolds number (geometric average)
                         Re == (rho_in*rho_out*V_in*V_out/mu_in/mu_out)**(0.5)*self.channel.l,
+                        #effectiveness
+                        eta_h/eta_h_ref == 0.799*Re_rat**-0.0296,
+                        eta_h <= 0.844, #to make sure fit is valid, since the curve is signomial
                         #pressure drop
                         Pf_rat**0.155 >= 0.475 * Re_rat ** 0.00121 + 0.0338 * Re_rat ** -0.336,
                         Pf*(0.5*rho_in*V_in**2) == fr,
-                        alpha >= 1 + dT*eps,
+                        alpha >= 1 + dT*eta_h,
                         dT*T_in + T_in <= Tr,
                         alpha == T_out/T_in,
                         P0_in >= P_out + 0.5*rho_in*V_in**2*Pf + 0.5*rho_out*V_out**2,
