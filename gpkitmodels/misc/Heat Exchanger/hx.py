@@ -10,16 +10,18 @@ class Channel(Model):
 
     Variables
     ---------
-    A_r        [m^2]     frontal area
-    h          [m]         channel height
-
+    A_r            [m^2]     frontal area
+    h              [m]       channel height
+    l              [m]       channel length
+    Pf_ref  21.66  [-]       reference pressure drop parameter
+    Re_ref  90550  [-]       reference Reynolds number
     Upper Unbounded
     ---------------
-    A_r
+    A_r, l
 
     Lower Unbounded
     ---------------
-    A_r
+    A_r, l
 
     """
     def setup(self):
@@ -42,24 +44,27 @@ class ChannelP(Model):
     fr                [N/m^2]     force per frontal area
     Hdot       9.9    [J/s]       heat flow rate
     mdot              [kg/s]      air mass flow rate
-    Pf         5      [-]         pressure drop parameter
+    Pf                [-]         pressure drop parameter
+    Re                [-]         Reynolds number
     Tr         85+273 [K]         wall temperature 
     A_e               [m^2]       flow exit area
 
 
     Upper Unbounded
     ---------------
-    fV, A_e, P0_in
+    fV, A_e, P0_in, mu_out, mu_in
 
     Lower Unbounded
     ---------------
-    fr, fV, V_out, P_out, V_in, rho_in, rho_out
+    fr, fV, V_out, P_out, V_in, rho_in, rho_out, mu_out, mu_in, Pf_ref
  
     """
     def setup(self, channel, state):
         self.channel = channel
         exec parse_variables(ChannelP.__doc__)
 
+        mu_in = self.mu_in = state.mu_in
+        mu_out = self.mu_out = state.mu_out
         rho_in = self.rho_in = state.rho_in
         rho_out = self.rho_out = state.rho_out
         V_in = self.V_in = state.V_in
@@ -69,13 +74,22 @@ class ChannelP(Model):
         P0_in = self.P0_in = state.P0_in
         P_out = self.P_out = state.P_out
         A_r = self.channel.A_r
+        Pf_ref = self.Pf_ref = self.channel.Pf_ref
+        Re_ref = self.channel.Re_ref
+        l = self.l = self.channel.l
+
+        Pf_rat = Pf/Pf_ref
+        Re_rat = Re/Re_ref
 
         constraints = []
         constraints += [mdot == rho_in*V_in*A_r,
                         mdot == rho_out*V_out*A_e,
                         Hdot == mdot*cp*dT*eps*T_in,
                         fV == V_out/V_in,
+                        #channel Reynolds number (geometric average)
+                        Re == (rho_in*rho_out*V_in*V_out/mu_in/mu_out)**(0.5)*self.channel.l,
                         #pressure drop
+                        Pf_rat**0.155 >= 0.475 * Re_rat ** 0.00121 + 0.0338 * Re_rat ** -0.336,
                         Pf*(0.5*rho_in*V_in**2) == fr,
                         alpha >= 1 + dT*eps,
                         dT*T_in + T_in <= Tr,
@@ -90,6 +104,8 @@ class HXState(Model):
 
     Variables
     ---------
+    mu_in      1.7*10**-5             [kg/(m*s)]  incoming dynamic viscosity
+    mu_out     1.7*10**-5             [kg/(m*s)]  exit dynamic viscosity
     P0_in      0.5*1.25*30**2+101000 [Pa]        incoming total pressure
     P_in                             [Pa]        incoming static pressure
     P_out      90000                 [Pa]        exit static pressure
@@ -148,5 +164,5 @@ if __name__ == "__main__":
     state = HXState()
     m = HX(state)
 
-    m.cost = m.channel.A_r*m.channelP.A_e*m.channelP.mdot
+    m.cost = m.channel.A_r*m.channelP.A_e*m.channel.l*m.channelP.fr
     sol = m.solve()
